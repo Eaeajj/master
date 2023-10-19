@@ -27,6 +27,7 @@ int main(int argc, char *argv[]) {
         printf ( "Max threads per MP      : %d\n", devProp.maxThreadsPerMultiProcessor );
         printf ( "Max threads Dim         : %d\n", devProp.maxThreadsDim );
         printf ( "Count of MPs            : %d\n", devProp.multiProcessorCount );
+        printf ( "Shared mem for block    : %d\n", devProp.sharedMemPerBlock );
     }
     return 0;
 }

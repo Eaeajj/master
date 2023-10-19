@@ -4,7 +4,6 @@
 #include <stdexcept>
 #include <algorithm>
 
-
 template <class T>
 class dev_array {
     public:
@@ -64,7 +63,9 @@ class dev_array {
             cudaError_t result = cudaMalloc((void**)&start_, size * sizeof(T));
             if (result != cudaSuccess) {
                 start_ = end_ = 0;
-                throw std::runtime_error("failed to allocate device memory");
+                printf("Error is: %d\n", result);
+                fflush(stdout);
+                throw std::runtime_error("failed to allocate dewvice memory");
             }
             end_ = start_ + size;
         }
