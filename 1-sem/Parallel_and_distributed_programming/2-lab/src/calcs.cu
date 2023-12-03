@@ -9,8 +9,6 @@ using namespace std;
 
 // ----------------------------- kernel funcs ---------------------------------------
 __global__ void mul_vector_with_conflicts(vec3* a, vec3* b, vec3* c) {
-    //int delta = 1000;
-    //int i = delta - threadIdx.x % delta + threadIdx.x / delta;
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
     c[i].x = a[i].x * b[i].x;
@@ -26,8 +24,7 @@ __global__ void mul_vector(vec3_aligned* a, vec3_aligned* b, float* res21, float
     res23[i] = a[i].z * b[i].z;
 }
 
-__global__ void mul_mat(float* a, float* b, float* c, size_t n)
-{
+__global__ void mul_mat(float* a, float* b, float* c, size_t n) {
     int bx = blockIdx.x;        // block index
     int by = blockIdx.y;
 

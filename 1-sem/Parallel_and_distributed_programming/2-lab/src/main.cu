@@ -160,6 +160,8 @@ void task_2_2(size_t n) {
 }
 
 int main(int argc, char* argv[]) {
+    // task_1();
+
     task_2_2(2048);
 }
 
