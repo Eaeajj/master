@@ -23,49 +23,81 @@ constexpr bool CV_SUCCESS = true;
     } \
 } \
 
-__constant__ float GAUSSIAN_FILTER_SUM = 256.0f;
-__constant__ float GAUSSIAN_FILTER[5][5] = {
-    {1,  4,  6,  4,  1},
-    {4, 16, 24, 16,  4},
-    {6, 24, 36, 24,  6},
-    {4, 16, 24, 16,  4},
-    {1,  4,  6,  4,  1}
-};
+// ---------------------------- task 1 --------------------------------
 
-__global__ void GaussianTextureKernel(uint8_t* output, const cudaTextureObject_t texObj, int width, int height) {
+std::vector<std::vector<float>> generate_gaussian_matrix(uint8_t radius) {
+   std::vector<std::vector<float>> gaussian_filter(radius, std::vector<float>(radius));
+   double sigma = 1;
+   double mean = radius / 2;
+   double sum = 0.0;
+
+   for (int i = 0; i < radius; ++i) {
+       for (int j = 0; j < radius; ++j) {
+        double arg_x = ((i - mean) / sigma) * ((i - mean) / sigma);
+        double arg_y = ((j - mean) / sigma) * ((j - mean) / sigma);
+        double exponential_term = exp(-0.5 * (arg_x + arg_y));
+
+        double normalization_constant = 2 * M_PI * sigma * sigma;
+
+        gaussian_filter[i][j] = exponential_term / normalization_constant;
+        sum += gaussian_filter[i][j];
+       }
+   }
+
+   
+   for (int x = 0; x < radius; ++x) {
+       for (int y = 0; y < radius; ++y) {
+           gaussian_filter[x][y] /= sum;
+       }
+   }
+
+    std::cout << "матрица весов: \n";
+    for (auto row: gaussian_filter) {
+        for (auto item: row ) {
+            std::cout <<  item << ' ';
+        }
+        std::cout << '\n';
+    }
+
+   return gaussian_filter;
+}
+
+__global__ void gaussian_texture_kernel(uint8_t* output, const cudaTextureObject_t tex_obj, int width, int height, float* d_gaussian_matrix, uint8_t diametr) {
     uint x = blockIdx.x * blockDim.x + threadIdx.x;
     uint y = blockIdx.y * blockDim.y + threadIdx.y;
 
+    uint8_t r = diametr / 2; // radius == 3 => -2, -1, 0, 1, 2
     if (x < width && y < height) {
 
       float3 res = make_float3(0.0f, 0.0f, 0.0f);
 
-      for (int i = -2; i <= 2; ++i) {
-        for (int j = -2; j <= 2; ++j) {
+      for (int i = -r; i <= r; ++i) {
+        for (int j = -r; j <= r; ++j) {
           int offsetX = x + j;
           int offsetY = y + i;
 
           if (offsetX >= 0 && offsetX < width && offsetY >= 0 && offsetY < height) {
             float3 pixel = make_float3(
-              tex2D<uint8_t>(texObj, offsetX * 3, offsetY),
-              tex2D<uint8_t>(texObj, offsetX * 3 + 1, offsetY),
-              tex2D<uint8_t>(texObj, offsetX * 3 + 2, offsetY)
-            );
+              tex2D<uint8_t>(tex_obj, offsetX * 3, offsetY),
+              tex2D<uint8_t>(tex_obj, offsetX * 3 + 1, offsetY),
+              tex2D<uint8_t>(tex_obj, offsetX * 3 + 2, offsetY)
+            ); // color
 
-            res.x += pixel.x * GAUSSIAN_FILTER[i + 2][j + 2];
-            res.y += pixel.y * GAUSSIAN_FILTER[i + 2][j + 2];
-            res.z += pixel.z * GAUSSIAN_FILTER[i + 2][j + 2];
+            auto curr_multiplier = d_gaussian_matrix[(i + r) * r + (j + r)];
+            res.x += pixel.x * curr_multiplier;
+            res.y += pixel.y * curr_multiplier;
+            res.z += pixel.z * curr_multiplier;
           }
         }
       }
 
-      output[y * (width * 3) + (x * 3)] = res.x / GAUSSIAN_FILTER_SUM;
-      output[y * (width * 3) + (x * 3) + 1] = res.y / GAUSSIAN_FILTER_SUM;
-      output[y * (width * 3) + (x * 3) + 2] = res.z / GAUSSIAN_FILTER_SUM;
+      output[y * (width * 3) + (x * 3)] = res.x;
+      output[y * (width * 3) + (x * 3) + 1] = res.y;
+      output[y * (width * 3) + (x * 3) + 2] = res.z;
     }
 }
 
-void initTexture(cudaTextureObject_t& texObj, uint8_t* d_img, cv::Mat& _img, int w, int h) {
+void init_texture(cudaTextureObject_t& tex_obj, uint8_t* d_img, cv::Mat& _img, int w, int h) {
     size_t pitch;
     CHECK_CU(cudaMallocPitch(&d_img, &pitch, _img.step1(), h));
     CHECK_CU(cudaMemcpy2D(
@@ -96,12 +128,13 @@ void initTexture(cudaTextureObject_t& texObj, uint8_t* d_img, cv::Mat& _img, int
     texDescr.addressMode[1] = cudaAddressModeClamp;
     texDescr.readMode = cudaReadModeElementType;
 
-    CHECK_CU(cudaCreateTextureObject(&texObj, &texRes, &texDescr, NULL));
+    CHECK_CU(cudaCreateTextureObject(&tex_obj, &texRes, &texDescr, NULL));
 }
 
-void run_1_task(std::string inputPath, std::string outputPath, uint8_t radius) {
+void run_1_task(std::string input_path, std::string output_path, uint8_t diametr) {
     try {
-        const std::string filename = inputPath;
+        cudaDeviceSynchronize();
+        const std::string filename = input_path;
         cv::Mat image = cv::imread(filename, cv::IMREAD_COLOR);
         
 
@@ -109,89 +142,75 @@ void run_1_task(std::string inputPath, std::string outputPath, uint8_t radius) {
             printf("Cannot read image file: %s\n", filename.c_str());
             return;
         }
+        auto host_gaussian_filter = generate_gaussian_matrix(diametr);
 
-        cudaTextureObject_t texObj;
+
+        std::vector<float> flat_filter;
+        for (const auto& row : host_gaussian_filter) {
+            flat_filter.insert(flat_filter.end(), row.begin(), row.end());
+        }
+
+        float* d_gaussianFilter;
+        CHECK_CU(cudaMalloc((void**)&d_gaussianFilter, flat_filter.size() * sizeof(float)));
+        CHECK_CU(cudaMemcpy(d_gaussianFilter, flat_filter.data(), flat_filter.size() * sizeof(float), cudaMemcpyHostToDevice));
+
+        cudaTextureObject_t tex_obj;
         uint8_t* d_img;
         uint8_t* d_output;
-        uint8_t* gpuRef = new uint8_t[image.cols * image.rows * sizeof(uint8_t) * 3];
+        uint8_t* gpu_ref = new uint8_t[image.cols * image.rows * sizeof(uint8_t) * 3];
 
-        initTexture(texObj, d_img, image, image.cols, image.rows);
+        init_texture(tex_obj, d_img, image, image.cols, image.rows);
 
         // Allocate result of transformation in device memory
         CHECK_CU(cudaMalloc((void **) &d_output, image.cols * image.rows * sizeof(uint8_t) * 3));
 
 
         // Invoke kernel
-        dim3 dimBlock(16, 16);
-        dim3 dimGrid(
-            (image.cols + dimBlock.x - 1) / dimBlock.x,
-            (image.rows + dimBlock.y - 1) / dimBlock.y
+        dim3 dim_block(16, 16);
+        dim3 dim_grid(
+            (image.cols + dim_block.x - 1) / dim_block.x,
+            (image.rows + dim_block.y - 1) / dim_block.y
         );
 
-        printf("Kernel Dimension :\n   Block size : %i , %i \n    Grid size : %i , %i",
-            dimBlock.x, dimBlock.y, dimGrid.x, dimGrid.y
+        printf("Kernel Dimension :\n   Block size : %i , %i \n    Grid size : %i , %i\n",
+            dim_block.x, dim_block.y, dim_grid.x, dim_grid.y
         );
 
-        GaussianTextureKernel <<< dimGrid, dimBlock >>> (d_output, texObj, image.cols, image.rows);
+        gaussian_texture_kernel <<< dim_grid, dim_block >>> (d_output, tex_obj, image.cols, image.rows, d_gaussianFilter, diametr);
 
-        CHECK_CU(cudaMemcpy(gpuRef, d_output, image.cols * image.rows * sizeof(uint8_t) * 3, cudaMemcpyDeviceToHost));
-        cv::Mat imageOut = cv::Mat(image.rows, image.cols, CV_8UC3, gpuRef);
-        CHECK_CV(imwrite(outputPath, imageOut));
+        CHECK_CU(cudaMemcpy(gpu_ref, d_output, image.cols * image.rows * sizeof(uint8_t) * 3, cudaMemcpyDeviceToHost));
+        cv::Mat image_out = cv::Mat(image.rows, image.cols, CV_8UC3, gpu_ref);
+        CHECK_CV(imwrite(output_path, image_out));
 
     
-        delete[] gpuRef;
-        CHECK_CU(cudaFree(d_output))
-        CHECK_CU(cudaFree(d_img))
-        CHECK_CU(cudaDestroyTextureObject(texObj))
+        delete[] gpu_ref;
+        CHECK_CU(cudaFree(d_output));
+        CHECK_CU(cudaDestroyTextureObject(tex_obj));
+        CHECK_CU(cudaFree(d_gaussianFilter));
+        CHECK_CU(cudaFree(d_img));
+        cudaDeviceSynchronize();
+        cudaDeviceReset();
     }
     catch (cv::Exception ex) {
         std::cerr << ex.what() << std::endl;
     }
 }
 
-std::vector<std::vector<float>> generateGaussianMatrixFilter(uint8_t radius) {
-   std::vector<std::vector<float>> gaussianFilter(radius, std::vector<float>(radius));
-   double sigma = 1;
-   double mean = radius / 2;
-   double sum = 0.0;
-
-   for (int i = 0; i < radius; ++i) {
-       for (int j = 0; j < radius; ++j) {
-        // Разбиваем на слагаемые и множители
-        double arg_x = ((i - mean) / sigma) * ((i - mean) / sigma);
-        double arg_y = ((j - mean) / sigma) * ((j - mean) / sigma);
-        double exponential_term = exp(-0.5 * (arg_x + arg_y));
-
-        double normalization_constant = 2 * M_PI * sigma * sigma;
-
-        gaussianFilter[i][j] = exponential_term / normalization_constant;
-        sum += gaussianFilter[i][j];
-       }
-   }
-
-   
-   for (int x = 0; x < radius; ++x) {
-       for (int y = 0; y < radius; ++y) {
-           gaussianFilter[x][y] /= sum;
-       }
-   }
-
-    std::cout << "матрица весов: \n";
-    for (auto row: gaussianFilter) {
-        for (auto item: row ) {
-            std::cout <<  item << ' ';
-        }
-        std::cout << '\n';
-    }
-
-   return gaussianFilter;
+void test_1_task() {
+    const auto img_path = "images/simple_kvashino.jpg";
+    run_1_task(img_path, "images/out3.jpg", 3);
+    run_1_task(img_path, "images/out5.jpg", 5);
+    run_1_task(img_path, "images/out7.jpg", 7);
+    run_1_task(img_path, "images/out9.jpg", 9);
+    run_1_task(img_path, "images/out11.jpg", 11);
 }
+
+// ---------------------------- task 2 --------------------------------
+
 
 
 int main() {
-
-
-    run_1_task("images/simple_kvashino.jpg", "images/out.jpg", 3);
+    // test_1_task();
 
     return 0;
 }
