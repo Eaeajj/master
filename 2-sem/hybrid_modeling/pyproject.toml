@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "math"
+name = "solutions"
 version = "0.1.0"
 description = ""
 authors = ["Eaeajj <ozalesskiy71@gmail.com>"]
