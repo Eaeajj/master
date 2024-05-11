@@ -3,3 +3,5 @@
 venv
 *.zip
 *.tar
+*/**/dist/
+*/**/node_modules/
