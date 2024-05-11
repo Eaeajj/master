@@ -1,0 +1,8 @@
+{
+  "totalTime": 3000,
+  "averageTasksTimeInSystem": 300.3333333333333,
+  "averageTasksTimeInQueue": 0.1111111111111111,
+  "averageWorkerIdleTime": 298,
+  "averageQueueLength": 9.322033898305085,
+  "maxQueueLength": 19
+}

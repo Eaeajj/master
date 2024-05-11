@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "module": "CommonJS",
+    "sourceMap": false,
+    "outDir": "dist",
+    "esModuleInterop": true,
+    
+    "target": "ESNext",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*"],
+}
